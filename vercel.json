@@ -1,0 +1,13 @@
+{
+  "outputDirectory": ".",
+  "rewrites": [
+    { "source": "/app", "destination": "/app.html" },
+    { "source": "/music", "destination": "/music.html" },
+    { "source": "/milan-music", "destination": "/music.html" },
+    { "source": "/about", "destination": "/about.html" },
+    { "source": "/privacy", "destination": "/privacy.html" },
+    { "source": "/terms", "destination": "/terms.html" },
+    { "source": "/settings", "destination": "/settings.html" },
+    { "source": "/(.*)", "destination": "/$1" }
+  ]
+}
