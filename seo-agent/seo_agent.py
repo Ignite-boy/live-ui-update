@@ -17,16 +17,15 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 DEFAULT_TARGET = "https://milanlife.in/"
-USER_AGENT = "MILAN-Deep-SEO-Agent/1.1 (+technical-seo-audit)"
+USER_AGENT = "MILAN-Deep-SEO-Agent/1.2 (+technical-seo-audit)"
 MAX_PAGES = int(os.getenv("SEO_MAX_PAGES", "100"))
 TIMEOUT = int(os.getenv("SEO_TIMEOUT", "15"))
 
-# Routes that are application utilities rather than indexable content pages.
-# They may be client-side routes or authentication flows and should not fail the
-# public-content SEO audit when they are intentionally non-indexable.
+# Routes that are application utilities or machine-readable discovery documents.
+# They are intentionally outside an HTML-content SEO audit.
 SKIP_ROUTES = {
     "/login", "/register", "/admin", "/admin-users.html", "/settings",
-    "/chat", "/reset-password", "/disclaimer", "/cookie-policy",
+    "/chat", "/reset-password", "/disclaimer", "/cookie-policy", "/llms.txt",
 }
 
 
@@ -110,7 +109,7 @@ def path_of(url: str) -> str:
 
 def should_skip(url: str) -> bool:
     path = path_of(url)
-    return path in SKIP_ROUTES
+    return path in SKIP_ROUTES or path.startswith("/api/")
 
 
 def same_origin(url: str, origin: str) -> bool:
@@ -133,7 +132,7 @@ def audit(target: str) -> dict:
     pages = []
     sitemap_urls = load_sitemap(origin)
     for u in sitemap_urls[:MAX_PAGES]:
-        if same_origin(u, origin): queue.append(normalize(u))
+        if same_origin(u, origin) and not should_skip(u): queue.append(normalize(u))
 
     while queue and len(seen) < MAX_PAGES:
         url = queue.popleft()
