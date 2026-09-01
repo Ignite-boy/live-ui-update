@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import sys
 import time
 from collections import deque
 from html.parser import HTMLParser
@@ -18,9 +17,17 @@ from urllib.parse import urljoin, urlparse
 from urllib.request import Request, urlopen
 
 DEFAULT_TARGET = "https://milanlife.in/"
-USER_AGENT = "MILAN-Deep-SEO-Agent/1.0 (+technical-seo-audit)"
+USER_AGENT = "MILAN-Deep-SEO-Agent/1.1 (+technical-seo-audit)"
 MAX_PAGES = int(os.getenv("SEO_MAX_PAGES", "100"))
 TIMEOUT = int(os.getenv("SEO_TIMEOUT", "15"))
+
+# Routes that are application utilities rather than indexable content pages.
+# They may be client-side routes or authentication flows and should not fail the
+# public-content SEO audit when they are intentionally non-indexable.
+SKIP_ROUTES = {
+    "/login", "/register", "/admin", "/admin-users.html", "/settings",
+    "/chat", "/reset-password", "/disclaimer", "/cookie-policy",
+}
 
 
 class PageParser(HTMLParser):
@@ -54,7 +61,8 @@ class PageParser(HTMLParser):
             if name == "robots": self.robots = content.strip()
             if prop.startswith("og:"): self.og[prop] = content.strip()
         elif tag == "link":
-            if (a.get("rel") or "").lower() == "canonical": self.canonical = a.get("href", "").strip()
+            rel = " ".join(a.get("rel", [])).lower() if isinstance(a.get("rel"), list) else (a.get("rel") or "").lower()
+            if rel == "canonical": self.canonical = a.get("href", "").strip()
         elif tag == "a":
             href = a.get("href")
             if href: self.links.append(href)
@@ -96,12 +104,21 @@ def normalize(url: str) -> str:
     return f"{p.scheme}://{p.netloc}{path}"
 
 
+def path_of(url: str) -> str:
+    return (urlparse(url).path or "/").rstrip("/") or "/"
+
+
+def should_skip(url: str) -> bool:
+    path = path_of(url)
+    return path in SKIP_ROUTES
+
+
 def same_origin(url: str, origin: str) -> bool:
     return urlparse(url).netloc == urlparse(origin).netloc and urlparse(url).scheme in {"http", "https"}
 
 
 def load_sitemap(base: str) -> list[str]:
-    for candidate in (urljoin(base, "/sitemap.xml"), urljoin(base, "/sitemap_index.xml")):
+    for candidate in (urljoin(base, "/sitemap.xml"), urljoin(base, "/sitemap-index.xml"), urljoin(base, "/sitemap_index.xml")):
         status, ctype, body = fetch(candidate)
         if status == 200 and b"<loc>" in body:
             return [x.decode(errors="ignore").strip() for x in re.findall(rb"<loc>(.*?)</loc>", body)][:MAX_PAGES]
@@ -120,7 +137,7 @@ def audit(target: str) -> dict:
 
     while queue and len(seen) < MAX_PAGES:
         url = queue.popleft()
-        if url in seen or not same_origin(url, origin): continue
+        if url in seen or not same_origin(url, origin) or should_skip(url): continue
         seen.add(url)
         status, ctype, body = fetch(url)
         item = {"url": url, "status": status, "content_type": ctype, "issues": [], "warnings": []}
@@ -144,11 +161,8 @@ def audit(target: str) -> dict:
             "og_title": parser.og.get("og:title", ""),
             "og_description": parser.og.get("og:description", ""),
             "og_image": parser.og.get("og:image", ""),
-            "jsonld_types": sorted({
-                str(x.get("@type")) for x in parser.jsonld if isinstance(x, dict) and x.get("@type")
-            }),
+            "jsonld_types": sorted({str(x.get("@type")) for x in parser.jsonld if isinstance(x, dict) and x.get("@type")}),
         })
-        # Conservative technical checks. Ranges are heuristics, not ranking guarantees.
         if not parser.title: item["issues"].append("missing_title")
         elif not 20 <= len(parser.title) <= 65: item["warnings"].append("title_length_outside_common_range")
         if not parser.description: item["issues"].append("missing_meta_description")
@@ -163,7 +177,7 @@ def audit(target: str) -> dict:
         pages.append(item)
         for href in parser.links:
             absolute = normalize(urljoin(url, href))
-            if same_origin(absolute, origin) and absolute not in seen and not any(x in absolute.lower() for x in ("/login", "/register", "/admin", "/settings")):
+            if same_origin(absolute, origin) and absolute not in seen and not should_skip(absolute):
                 queue.append(absolute)
         time.sleep(0.05)
 
@@ -180,11 +194,7 @@ def audit(target: str) -> dict:
         "issues": all_issues,
         "warnings": all_warnings,
         "pages": pages,
-        "policy": {
-            "no_mass_generated_pages": True,
-            "quality_first": True,
-            "ranking_not_guaranteed": True,
-        },
+        "policy": {"no_mass_generated_pages": True, "quality_first": True, "ranking_not_guaranteed": True},
     }
 
 
